@@ -18,6 +18,9 @@ SSO 設定は `.env`
 VITE_CLIENT_ID=
 VITE_AUTHORITY=
 VITE_SCOPES=
+VITE_EXPECTED_ISSUER=
+VITE_EXPECTED_AUDIENCE=
+VITE_OPENID_CONFIG_URL=
 VITE_REDIRECT_URI=
 VITE_POST_LOGOUT_REDIRECT_URI=
 ```
@@ -25,6 +28,9 @@ VITE_POST_LOGOUT_REDIRECT_URI=
 - `VITE_CLIENT_ID`: アプリの Client ID
 - `VITE_AUTHORITY`: External ID の authority
 - `VITE_SCOPES`: 例: `openid,profile,email,api://<app-id>/access_as_user`
+- `VITE_EXPECTED_ISSUER`: 検証用の issuer（完全一致）
+- `VITE_EXPECTED_AUDIENCE`: 検証用の audience（完全一致）
+- `VITE_OPENID_CONFIG_URL`: OpenID の `/.well-known/openid-configuration` URL
 - `VITE_REDIRECT_URI`: 未指定時は `http://localhost:3000/auth`
 - `VITE_POST_LOGOUT_REDIRECT_URI`: 未指定時は `http://localhost:3000`
 

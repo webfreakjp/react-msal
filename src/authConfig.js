@@ -25,10 +25,17 @@ export const loginRequest = {
   scopes: rawScopes.length > 0 ? rawScopes : defaultScopes
 };
 
+export const tokenValidationConfig = {
+  expectedIssuer: import.meta.env.VITE_EXPECTED_ISSUER || "",
+  expectedAudience: import.meta.env.VITE_EXPECTED_AUDIENCE || "",
+  openIdConfigUrl: import.meta.env.VITE_OPENID_CONFIG_URL || ""
+};
+
 export const ssoConfig = {
   clientId: msalConfig.auth.clientId,
   authority: msalConfig.auth.authority,
   redirectUri: msalConfig.auth.redirectUri,
   postLogoutRedirectUri: msalConfig.auth.postLogoutRedirectUri,
-  scopes: loginRequest.scopes
+  scopes: loginRequest.scopes,
+  tokenValidation: tokenValidationConfig
 };

@@ -5,7 +5,8 @@ import {
   useMsal
 } from "@azure/msal-react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
-import { loginRequest, ssoConfig } from "./authConfig.js";
+import { createRemoteJWKSet, jwtVerify } from "jose";
+import { loginRequest, ssoConfig, tokenValidationConfig } from "./authConfig.js";
 
 const formatDate = (value) => {
   if (!value) return "";
@@ -30,11 +31,88 @@ const serializeTokenResult = (result) => {
   return JSON.stringify(base, null, 2);
 };
 
+const decodeJwt = (token) => {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    return JSON.parse(atob(padded));
+  } catch (error) {
+    return null;
+  }
+};
+
+const getExpectedAudience = (scopes) => {
+  if (!Array.isArray(scopes)) return "";
+  const apiScope = scopes.find((scope) => scope.startsWith("api://"));
+  if (!apiScope) return "";
+  const parts = apiScope.split("/");
+  return parts.length >= 3 ? parts.slice(0, 3).join("/") : apiScope;
+};
+
+const normalizeAud = (aud) => {
+  if (!aud) return [];
+  return Array.isArray(aud) ? aud : [aud];
+};
+
+const validateAccessToken = (claims, validationConfig, scopes) => {
+  if (!claims) {
+    return {
+      ok: false,
+      checks: [{ name: "token", ok: false, detail: "No access token" }]
+    };
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expectedAudience = validationConfig.expectedAudience || "";
+  const audienceList = normalizeAud(claims.aud);
+  const expectedIssuer = validationConfig.expectedIssuer || "";
+
+  const checks = [
+    {
+      name: "exp",
+      ok: typeof claims.exp === "number" && nowSeconds < claims.exp,
+      detail: `exp=${claims.exp ?? "missing"} now=${nowSeconds}`
+    },
+    {
+      name: "nbf",
+      ok: typeof claims.nbf !== "number" || nowSeconds >= claims.nbf,
+      detail: `nbf=${claims.nbf ?? "missing"} now=${nowSeconds}`
+    },
+    {
+      name: "iss",
+      ok: expectedIssuer ? String(claims.iss || "") === expectedIssuer : true,
+      detail: `iss=${claims.iss ?? "missing"}`
+    },
+    {
+      name: "aud",
+      ok: expectedAudience ? audienceList.includes(expectedAudience) : true,
+      detail: `aud=${audienceList.join(", ") || "missing"}`
+    }
+  ];
+
+  return {
+    ok: checks.every((check) => check.ok),
+    expected: {
+      expectedIssuer: expectedIssuer || "(no check)",
+      expectedAudience: expectedAudience || "(no check)"
+    },
+    checks
+  };
+};
+
 export default function App() {
   const { instance, accounts, inProgress } = useMsal();
   const account = accounts[0] || null;
   const [tokenResult, setTokenResult] = useState(null);
   const [tokenError, setTokenError] = useState("");
+  const [jwksStatus, setJwksStatus] = useState(null);
+  const accessTokenClaims = useMemo(
+    () => decodeJwt(tokenResult?.accessToken),
+    [tokenResult?.accessToken]
+  );
 
   const missingConfig = useMemo(() => {
     return !ssoConfig.clientId || !ssoConfig.authority;
@@ -80,6 +158,63 @@ export default function App() {
     }
     void acquireToken();
   }, [account?.homeAccountId]);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!tokenResult?.accessToken) {
+        setJwksStatus({ ok: false, detail: "No access token" });
+        return;
+      }
+      if (!tokenValidationConfig.openIdConfigUrl) {
+        setJwksStatus({
+          ok: false,
+          detail: "VITE_OPENID_CONFIG_URL is empty"
+        });
+        return;
+      }
+      try {
+        const configResponse = await fetch(tokenValidationConfig.openIdConfigUrl);
+        if (!configResponse.ok) {
+          throw new Error(
+            `OpenID config fetch failed: ${configResponse.status}`
+          );
+        }
+        const openIdConfig = await configResponse.json();
+        if (!openIdConfig?.jwks_uri) {
+          throw new Error("jwks_uri is missing in OpenID config");
+        }
+        const jwks = createRemoteJWKSet(new URL(openIdConfig.jwks_uri));
+        const expectedAudience = tokenValidationConfig.expectedAudience || "";
+        const expectedIssuer = tokenValidationConfig.expectedIssuer || "";
+        const options = {
+          audience: expectedAudience || undefined,
+          issuer: expectedIssuer || undefined
+        };
+        const { protectedHeader } = await jwtVerify(
+          tokenResult.accessToken,
+          jwks,
+          options
+        );
+        setJwksStatus({
+          ok: true,
+          detail: "Signature verified",
+          header: protectedHeader,
+          jwksUri: openIdConfig.jwks_uri
+        });
+      } catch (error) {
+        setJwksStatus({ ok: false, detail: error?.message || String(error) });
+      }
+    };
+    void run();
+  }, [tokenResult?.accessToken]);
+
+  const accessTokenValidation = useMemo(() => {
+    return validateAccessToken(
+      accessTokenClaims,
+      tokenValidationConfig,
+      loginRequest.scopes
+    );
+  }, [accessTokenClaims]);
 
   return (
     <div className="page">
@@ -167,6 +302,24 @@ export default function App() {
             <p className="error">{tokenError}</p>
           )}
           <pre className="code">{serializeTokenResult(tokenResult)}</pre>
+        </section>
+
+        <section className="card">
+          <h2>Access Token Validation (client-only)</h2>
+          <p className="subtle">
+            本来はバックエンドで実施。ここでは簡易チェックと JWKS 検証のデモのみ。
+          </p>
+          <pre className="code">
+            {JSON.stringify(accessTokenValidation, null, 2)}
+          </pre>
+        </section>
+
+        <section className="card">
+          <h2>JWKS Signature Check (client demo)</h2>
+          <p className="subtle">
+            本番ではバックエンドで署名検証すること。
+          </p>
+          <pre className="code">{JSON.stringify(jwksStatus, null, 2)}</pre>
         </section>
       </AuthenticatedTemplate>
 
