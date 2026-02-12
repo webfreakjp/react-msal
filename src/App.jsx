@@ -109,6 +109,7 @@ export default function App() {
   const [tokenResult, setTokenResult] = useState(null);
   const [tokenError, setTokenError] = useState("");
   const [jwksStatus, setJwksStatus] = useState(null);
+  const [emailHint, setEmailHint] = useState("");
   const accessTokenClaims = useMemo(
     () => decodeJwt(tokenResult?.accessToken),
     [tokenResult?.accessToken]
@@ -121,7 +122,11 @@ export default function App() {
   const login = () => {
     if (missingConfig) return;
     setTokenError("");
-    instance.loginRedirect(loginRequest);
+    const trimmed = emailHint.trim();
+    instance.loginRedirect({
+      ...loginRequest,
+      loginHint: trimmed.length > 0 ? trimmed : undefined
+    });
   };
 
   const logout = () => {
@@ -130,7 +135,7 @@ export default function App() {
     });
   };
 
-  const acquireToken = async () => {
+  const acquireToken = async ({ allowInteractive } = { allowInteractive: false }) => {
     if (!account || missingConfig) return;
     setTokenError("");
     try {
@@ -141,10 +146,14 @@ export default function App() {
       setTokenResult(result);
     } catch (error) {
       if (error instanceof InteractionRequiredAuthError) {
-        instance.acquireTokenRedirect({
-          ...loginRequest,
-          account
-        });
+        if (allowInteractive) {
+          instance.acquireTokenRedirect({
+            ...loginRequest,
+            account
+          });
+          return;
+        }
+        setTokenError("Interaction required. Click Acquire Token to continue.");
         return;
       }
       setTokenError(error?.message || String(error));
@@ -218,6 +227,38 @@ export default function App() {
 
   return (
     <div className="page">
+      {window.location.pathname === "/login" ? (
+        <section className="card">
+          <h1>Custom Login</h1>
+          <p className="subtle">
+            メールアドレスを入力してから Microsoft のログイン画面へ進みます。
+          </p>
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              placeholder="user@example.com"
+              value={emailHint}
+              onChange={(event) => setEmailHint(event.target.value)}
+            />
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              onClick={login}
+              disabled={missingConfig || inProgress !== "none"}
+            >
+              Continue to Microsoft
+            </button>
+            <a className="ghost-link" href="/">
+              Back to App
+            </a>
+          </div>
+        </section>
+      ) : null}
+      {window.location.pathname === "/login" ? null : (
+      <>
       <header className="hero">
         <div>
           <p className="eyebrow">MSAL External ID SSO Sample</p>
@@ -234,6 +275,9 @@ export default function App() {
           >
             Login (Redirect)
           </button>
+          <a className="ghost-link" href="/login">
+            Custom Login
+          </a>
           <button
             type="button"
             className="ghost"
@@ -285,7 +329,7 @@ export default function App() {
             <button
               type="button"
               className="ghost"
-              onClick={acquireToken}
+              onClick={() => acquireToken({ allowInteractive: true })}
               disabled={inProgress !== "none"}
             >
               Acquire Token
@@ -331,6 +375,8 @@ export default function App() {
           </p>
         </section>
       </UnauthenticatedTemplate>
+      </>
+      )}
     </div>
   );
 }
